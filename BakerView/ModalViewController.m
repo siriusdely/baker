@@ -4,7 +4,7 @@
 //
 //  ==========================================================================================
 //
-//  Copyright (c) 2010-2012, Davide Casali, Marco Colombo, Alessandro Morandi
+//  Copyright (c) 2010-2013, Davide Casali, Marco Colombo, Alessandro Morandi
 //  All rights reserved.
 //
 //  Redistribution and use in source and binary forms, with or without modification, are
@@ -59,6 +59,9 @@
 //
 
 #import "ModalViewController.h"
+#import "UIColor+Extensions.h"
+#import "UIConstants.h"
+#import "Utils.h"
 
 @implementation ModalViewController
 
@@ -67,6 +70,7 @@
 @synthesize toolbar;
 @synthesize btnGoBack;
 @synthesize btnGoForward;
+@synthesize btnReload;
 @synthesize spinner;
 
 #pragma mark - INIT
@@ -97,15 +101,28 @@
                                                                    style:UIBarButtonItemStyleBordered
                                                                   target:self
                                                                   action:@selector(dismissAction)] autorelease];
+
     UIBarButtonItem *btnAction = [[[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemAction target:self action:@selector(openInSafari)] autorelease];
 
-    self.btnGoBack = [[[UIBarButtonItem alloc] initWithImage:[UIImage imageNamed:@"back.png"] style:UIBarButtonItemStylePlain target:self action:@selector(goBack)] autorelease];
+    self.btnGoBack = [[[UIBarButtonItem alloc] initWithImage:[UIImage imageNamed:@"back"] style:UIBarButtonItemStylePlain target:self action:@selector(goBack)] autorelease];
     btnGoBack.enabled = NO;
     btnGoBack.width = 30;
 
-    self.btnGoForward = [[[UIBarButtonItem alloc] initWithImage:[UIImage imageNamed:@"forward.png"] style:UIBarButtonItemStylePlain target:self action:@selector(goForward)] autorelease];
+    self.btnGoForward = [[[UIBarButtonItem alloc] initWithImage:[UIImage imageNamed:@"forward"] style:UIBarButtonItemStylePlain target:self action:@selector(goForward)] autorelease];
     btnGoForward.enabled = NO;
     btnGoForward.width = 30;
+
+    self.btnReload = [[[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemRefresh target:self action:@selector(reloadPage)] autorelease];
+    btnReload.enabled = NO;
+    btnGoForward.width = 30;
+
+    if (SYSTEM_VERSION_GREATER_THAN_OR_EQUAL_TO(@"7.0")) {
+        btnClose.tintColor = [UIColor colorWithHexString:ISSUES_ACTION_BUTTON_BACKGROUND_COLOR];
+        btnAction.tintColor = [UIColor colorWithHexString:ISSUES_ACTION_BUTTON_BACKGROUND_COLOR];
+        btnGoBack.tintColor = [UIColor colorWithHexString:ISSUES_ACTION_BUTTON_BACKGROUND_COLOR];
+        btnGoForward.tintColor = [UIColor colorWithHexString:ISSUES_ACTION_BUTTON_BACKGROUND_COLOR];
+        btnReload.tintColor = [UIColor colorWithHexString:ISSUES_ACTION_BUTTON_BACKGROUND_COLOR];
+    }
 
     self.spinner = [[[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleGray] autorelease];
     spinner.frame = CGRectMake(3, 3, 25, 25);
@@ -118,14 +135,13 @@
 
     UIBarButtonItem *spacer = [[[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemFlexibleSpace target:nil action:nil] autorelease];
 
-
     // ****** Add Toolbar
     self.toolbar = [[UIToolbar new] autorelease];
     toolbar.barStyle = UIBarStyleDefault;
 
 
     // ****** Add items to toolbar
-    NSArray *items = [NSArray arrayWithObjects: btnClose, btnGoBack, btnGoForward, btnSpinner, spacer, btnAction, nil];
+    NSArray *items = [NSArray arrayWithObjects: btnClose, btnGoBack, btnGoForward, btnReload, btnSpinner, spacer, btnAction, nil];
     [toolbar setItems:items animated:NO];
 
 
@@ -138,7 +154,7 @@
 
 
     // ****** View
-    self.view = [UIView new];
+    self.view = [[UIView new] autorelease];
 
 
     // ****** Attach
@@ -164,6 +180,7 @@
 
     [btnGoBack release];
     [btnGoForward release];
+    [btnReload release];
 
     [spinner release];
     [toolbar release];
@@ -172,6 +189,9 @@
 
     [super dealloc];
 }
+- (BOOL)prefersStatusBarHidden {
+    return YES;
+}
 
 #pragma mark - WEBVIEW
 - (void)webViewDidStartLoad:(UIWebView *)webViewIn {
@@ -179,7 +199,7 @@
      * Start loading a new page in the UIWebView.
      */
 
-    NSLog(@"[Modal] Loading \"%@\"", [webViewIn.request.URL absoluteString]);
+    // NSLog(@"[Modal] Loading '%@'", [webViewIn.request.URL absoluteString]); <-- this isn't returning the URL correctly, check
     [spinner startAnimating];
 }
 - (void)webViewDidFinishLoad:(UIWebView *)webViewIn {
@@ -188,7 +208,7 @@
      * We reset the button status here.
      */
 
-    NSLog(@"[Modal] Finish loading.");
+    //NSLog(@"[Modal] Finish loading.");
     [[self delegate] webView:webViewIn setCorrectOrientation:self.interfaceOrientation];
 
     // ****** Stop spinner
@@ -197,13 +217,14 @@
     // ****** Update buttons
     btnGoBack.enabled    = [webViewIn canGoBack];
     btnGoForward.enabled = [webViewIn canGoForward];
+    btnReload.enabled = YES;
 }
 - (void)webView:(UIWebView *)webViewIn didFailLoadWithError:(NSError *)error {
-    NSLog(@"[Modal] Failed to load \"%@\", error code %i", [webViewIn.request.URL absoluteString], [error code]);
+    NSLog(@"[Modal] Failed to load '%@', error code %i", [webViewIn.request.URL absoluteString], [error code]);
     if ([error code] == -1009) {
         UILabel *errorLabel = [[[UILabel alloc] initWithFrame:self.webView.frame] autorelease];
         errorLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-        errorLabel.textAlignment = UITextAlignmentCenter;
+        errorLabel.textAlignment = NSTextAlignmentCenter;
         errorLabel.textColor = [UIColor grayColor];
         errorLabel.text = NSLocalizedString(@"WEB_MODAL_FAILURE_MESSAGE", nil);
         errorLabel.numberOfLines = 1;
@@ -243,6 +264,13 @@
      */
 
     [webView goForward];
+}
+- (void)reloadPage {
+    /****************************************************************************************************
+     * WebView reload button.
+     */
+    
+    [webView reload];
 }
 - (void)openInSafari {
     /****************************************************************************************************

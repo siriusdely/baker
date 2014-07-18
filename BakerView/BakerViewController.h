@@ -4,7 +4,7 @@
 //
 //  ==========================================================================================
 //
-//  Copyright (c) 2010-2012, Davide Casali, Marco Colombo, Alessandro Morandi
+//  Copyright (c) 2010-2013, Davide Casali, Marco Colombo, Alessandro Morandi
 //  All rights reserved.
 //
 //  Redistribution and use in source and binary forms, with or without modification, are
@@ -76,7 +76,7 @@
     BOOL userIsScrolling;
     BOOL shouldPropagateInterceptedTouch;
     BOOL shouldForceOrientationUpdate;
-    
+
     BOOL adjustViewsOnAppDidBecomeActive;
 
     UIScrollView *scrollView;
@@ -113,7 +113,9 @@
 @property (strong, nonatomic) BakerBook *book;
 @property (nonatomic, retain) UIScrollView *scrollView;
 @property (nonatomic, retain) UIWebView *currPage;
+
 @property int currentPageNumber;
+@property BOOL barsHidden;
 
 #pragma mark - INIT
 - (id)initWithBook:(BakerBook *)bakerBook;
@@ -132,6 +134,7 @@
 - (void)showPageDetails;
 - (void)setFrame:(CGRect)frame forPage:(UIWebView *)page;
 - (void)setupWebView:(UIWebView *)webView;
+- (void)removeWebViewDoubleTapGestureRecognizer:(UIView *)view;
 
 #pragma mark - LOADING
 - (BOOL)changePage:(int)page;
@@ -153,7 +156,6 @@
 #pragma mark - WEBVIEW
 - (void)webView:(UIWebView *)webView hidden:(BOOL)status animating:(BOOL)animating;
 - (void)webViewDidAppear:(UIWebView *)webView animating:(BOOL)animating;
-- (void)webView:(UIWebView *)webView dispatchHTMLEvent:(NSString *)event;
 - (void)webView:(UIWebView *)webView setCorrectOrientation:(UIInterfaceOrientation)interfaceOrientation;
 
 #pragma mark - SCREENSHOTS
@@ -179,8 +181,10 @@
 #pragma mark - BARS VISIBILITY
 - (CGRect)getNewNavigationFrame:(BOOL)hidden;
 - (void)toggleBars;
+- (void)showBars;
 - (void)showNavigationBar;
 - (void)hideBars:(NSNumber *)animated;
+- (void)handleBookProtocol:(NSURL *)url;
 
 #pragma mark - ORIENTATION
 - (NSString *)getCurrentInterfaceOrientation:(UIInterfaceOrientation)interfaceOrientation;

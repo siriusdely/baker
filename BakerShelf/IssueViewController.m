@@ -4,7 +4,7 @@
 //
 //  ==========================================================================================
 //
-//  Copyright (c) 2010-2012, Davide Casali, Marco Colombo, Alessandro Morandi
+//  Copyright (c) 2010-2013, Davide Casali, Marco Colombo, Alessandro Morandi
 //  All rights reserved.
 //
 //  Redistribution and use in source and binary forms, with or without modification, are
@@ -54,10 +54,10 @@
 @synthesize priceLabel;
 
 @synthesize issueCover;
-@synthesize titleFont;
-@synthesize infoFont;
 @synthesize titleLabel;
 @synthesize infoLabel;
+
+@synthesize currentStatus;
 
 #pragma mark - Init
 
@@ -66,7 +66,8 @@
     self = [super init];
     if (self) {
         self.issue = bakerIssue;
-        currentStatus = nil;
+        self.currentStatus = nil;
+
         purchaseDelayed = NO;
 
         #ifdef BAKER_NEWSSTAND
@@ -77,6 +78,7 @@
         [self addIssueObserver:@selector(handleDownloadProgressing:) name:self.issue.notificationDownloadProgressingName];
         [self addIssueObserver:@selector(handleDownloadFinished:) name:self.issue.notificationDownloadFinishedName];
         [self addIssueObserver:@selector(handleDownloadError:) name:self.issue.notificationDownloadErrorName];
+        [self addIssueObserver:@selector(handleUnzipError:) name:self.issue.notificationUnzipErrorName];
         #endif
     }
     return self;
@@ -94,36 +96,33 @@
     self.view.backgroundColor = [UIColor clearColor];
     self.view.tag = 42;
 
+    if (SYSTEM_VERSION_GREATER_THAN_OR_EQUAL_TO(@"7.0")) {
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(preferredContentSizeChanged:) name:UIContentSizeCategoryDidChangeNotification object:nil];
+    }
+
     UI ui = [IssueViewController getIssueContentMeasures];
 
     self.issueCover = [UIButton buttonWithType:UIButtonTypeCustom];
     issueCover.frame = CGRectMake(ui.cellPadding, ui.cellPadding, ui.thumbWidth, ui.thumbHeight);
-    
+
     issueCover.backgroundColor = [UIColor colorWithHexString:ISSUES_COVER_BACKGROUND_COLOR];
     issueCover.adjustsImageWhenHighlighted = NO;
     issueCover.adjustsImageWhenDisabled = NO;
-        
+
     issueCover.layer.shadowOpacity = 0.5;
     issueCover.layer.shadowOffset = CGSizeMake(0, 2);
     issueCover.layer.shouldRasterize = YES;
     issueCover.layer.rasterizationScale = [UIScreen mainScreen].scale;
-    
+
     [issueCover addTarget:self action:@selector(actionButtonPressed:) forControlEvents:UIControlEventTouchUpInside];
     [self.view addSubview:issueCover];
-
-    // SETUP USED FONTS
-    self.titleFont = [UIFont fontWithName:ISSUES_TITLE_FONT size:ISSUES_TITLE_FONT_SIZE];
-    self.infoFont = [UIFont fontWithName:ISSUES_INFO_FONT size:ISSUES_INFO_FONT_SIZE];
-    UIFont *actionFont = [UIFont fontWithName:ISSUES_ACTION_BUTTON_FONT size:ISSUES_ACTION_BUTTON_FONT_SIZE];
-    UIFont *archiveFont = [UIFont fontWithName:ISSUES_ARCHIVE_BUTTON_FONT size:ISSUES_ARCHIVE_BUTTON_FONT_SIZE];
 
     // SETUP TITLE LABEL
     self.titleLabel = [[[UILabel alloc] init] autorelease];
     titleLabel.textColor = [UIColor colorWithHexString:ISSUES_TITLE_COLOR];
     titleLabel.backgroundColor = [UIColor clearColor];
-    titleLabel.lineBreakMode = UILineBreakModeTailTruncation;
-    titleLabel.textAlignment = UITextAlignmentLeft;
-    titleLabel.font = titleFont;
+    titleLabel.lineBreakMode = NSLineBreakByTruncatingTail;
+    titleLabel.textAlignment = NSTextAlignmentLeft;
 
     [self.view addSubview:titleLabel];
 
@@ -131,9 +130,8 @@
     self.infoLabel = [[[UILabel alloc] init] autorelease];
     infoLabel.textColor = [UIColor colorWithHexString:ISSUES_INFO_COLOR];
     infoLabel.backgroundColor = [UIColor clearColor];
-    infoLabel.lineBreakMode = UILineBreakModeTailTruncation;
-    infoLabel.textAlignment = UITextAlignmentLeft;
-    infoLabel.font = infoFont;
+    infoLabel.lineBreakMode = NSLineBreakByTruncatingTail;
+    infoLabel.textAlignment = NSTextAlignmentLeft;
 
     [self.view addSubview:infoLabel];
 
@@ -141,16 +139,14 @@
     self.priceLabel = [[[UILabel alloc] init] autorelease];
     priceLabel.textColor = [UIColor colorWithHexString:ISSUES_PRICE_COLOR];
     priceLabel.backgroundColor = [UIColor clearColor];
-    priceLabel.lineBreakMode = UILineBreakModeTailTruncation;
-    priceLabel.textAlignment = UITextAlignmentLeft;
-    priceLabel.font = titleFont;
+    priceLabel.lineBreakMode = NSLineBreakByTruncatingTail;
+    priceLabel.textAlignment = NSTextAlignmentLeft;
 
     [self.view addSubview:priceLabel];
 
     // SETUP ACTION BUTTON
     self.actionButton = [UIButton buttonWithType:UIButtonTypeCustom];
     actionButton.backgroundColor = [UIColor colorWithHexString:ISSUES_ACTION_BUTTON_BACKGROUND_COLOR];
-    actionButton.titleLabel.font = actionFont;
 
     [actionButton setTitle:NSLocalizedString(@"ACTION_DOWNLOADED_TEXT", nil) forState:UIControlStateNormal];
     [actionButton setTitleColor:[UIColor colorWithHexString:ISSUES_ACTION_BUTTON_COLOR] forState:UIControlStateNormal];
@@ -161,13 +157,12 @@
     // SETUP ARCHIVE BUTTON
     self.archiveButton = [UIButton buttonWithType:UIButtonTypeCustom];
     archiveButton.backgroundColor = [UIColor colorWithHexString:ISSUES_ARCHIVE_BUTTON_BACKGROUND_COLOR];
-    archiveButton.titleLabel.font = archiveFont;
 
     [archiveButton setTitle:NSLocalizedString(@"ARCHIVE_TEXT", nil) forState:UIControlStateNormal];
     [archiveButton setTitleColor:[UIColor colorWithHexString:ISSUES_ARCHIVE_BUTTON_COLOR] forState:UIControlStateNormal];
-    [archiveButton addTarget:self action:@selector(archiveButtonPressed:) forControlEvents:UIControlEventTouchUpInside];
 
     #ifdef BAKER_NEWSSTAND
+    [archiveButton addTarget:self action:@selector(archiveButtonPressed:) forControlEvents:UIControlEventTouchUpInside];
     [self.view addSubview:archiveButton];
     #endif
 
@@ -180,9 +175,8 @@
     self.loadingLabel = [[[UILabel alloc] init] autorelease];
     loadingLabel.textColor = [UIColor colorWithHexString:ISSUES_LOADING_LABEL_COLOR];
     loadingLabel.backgroundColor = [UIColor clearColor];
-    loadingLabel.textAlignment = UITextAlignmentLeft;
+    loadingLabel.textAlignment = NSTextAlignmentLeft;
     loadingLabel.text = NSLocalizedString(@"DOWNLOADING_TEXT", nil);
-    loadingLabel.font = actionFont;
 
     [self.view addSubview:spinner];
     [self.view addSubview:loadingLabel];
@@ -198,7 +192,7 @@
     NKLibrary *nkLib = [NKLibrary sharedLibrary];
     for (NKAssetDownload *asset in [nkLib downloadingAssets]) {
         if ([asset.issue.name isEqualToString:self.issue.ID]) {
-            NSLog(@"Resuming abandoned Newsstand download: %@", asset.issue.name);
+            NSLog(@"[BakerShelf] Resuming abandoned Newsstand download: %@", asset.issue.name);
             [self.issue downloadWithAsset:asset];
         }
     }
@@ -207,6 +201,51 @@
     [self refreshContentWithCache:NO];
 }
 - (void)refreshContentWithCache:(bool)cache {
+    UIFont *titleFont;
+    UIFont *infoFont;
+    UIFont *actionFont;
+    UIFont *archiveFont;
+
+    #if defined(ISSUES_TITLE_FONT) && defined(ISSUES_TITLE_FONT_SIZE)
+        titleFont = [UIFont fontWithName:ISSUES_TITLE_FONT size:ISSUES_TITLE_FONT_SIZE];
+    #else
+        if (SYSTEM_VERSION_GREATER_THAN_OR_EQUAL_TO(@"7.0")) {
+            titleFont = [UIFont preferredFontForTextStyle:UIFontTextStyleHeadline];
+        } else {
+            titleFont = [UIFont fontWithName:@"Helvetica" size:15];
+        }
+    #endif
+
+    #if defined(ISSUES_INFO_FONT) && defined(ISSUES_INFO_FONT_SIZE)
+        infoFont = [UIFont fontWithName:ISSUES_INFO_FONT size:ISSUES_INFO_FONT_SIZE];
+    #else
+        if (SYSTEM_VERSION_GREATER_THAN_OR_EQUAL_TO(@"7.0")) {
+            infoFont = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
+        } else {
+            infoFont = [UIFont fontWithName:@"Helvetica" size:15];
+        }
+    #endif
+
+    #if defined(ISSUES_ACTION_BUTTON_FONT) && defined(ISSUES_ACTION_BUTTON_FONT_SIZE)
+        actionFont = [UIFont fontWithName:ISSUES_ACTION_BUTTON_FONT size:ISSUES_ACTION_BUTTON_FONT_SIZE];
+    #else
+        if (SYSTEM_VERSION_GREATER_THAN_OR_EQUAL_TO(@"7.0")) {
+            actionFont = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
+        } else {
+            actionFont = [UIFont fontWithName:@"Helvetica-Bold" size:11];
+        }
+    #endif
+
+    #if defined(ISSUES_ARCHIVE_BUTTON_FONT) && defined(ISSUES_ARCHIVE_BUTTON_FONT_SIZE)
+        archiveFont = [UIFont fontWithName:ISSUES_ARCHIVE_BUTTON_FONT size:ISSUES_ARCHIVE_BUTTON_FONT_SIZE];
+    #else
+        if (SYSTEM_VERSION_GREATER_THAN_OR_EQUAL_TO(@"7.0")) {
+            archiveFont = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
+        } else {
+            archiveFont = [UIFont fontWithName:@"Helvetica-Bold" size:11];
+        }
+    #endif
+
     UI ui = [IssueViewController getIssueContentMeasures];
     int heightOffset = ui.cellPadding;
     uint textLineheight = [@"The brown fox jumps over the lazy dog" sizeWithFont:infoFont constrainedToSize:CGSizeMake(MAXFLOAT, MAXFLOAT)].height;
@@ -217,27 +256,26 @@
     }];
 
     // SETUP TITLE LABEL
-    CGSize titleSize = [self.issue.title sizeWithFont:titleFont constrainedToSize:CGSizeMake(170, MAXFLOAT) lineBreakMode:UILineBreakModeWordWrap];
-    uint titleLines = MIN(4, titleSize.height / textLineheight);
-
-    titleLabel.frame = CGRectMake(ui.contentOffset, heightOffset, 170, textLineheight * titleLines);
-    titleLabel.numberOfLines = titleLines;
+    titleLabel.font = titleFont;
+    titleLabel.frame = CGRectMake(ui.contentOffset, heightOffset, 170, 60);
+    titleLabel.numberOfLines = 3;
     titleLabel.text = self.issue.title;
+    [titleLabel sizeToFit];
 
     heightOffset = heightOffset + titleLabel.frame.size.height + 5;
 
     // SETUP INFO LABEL
-    CGSize infoSize = [self.issue.info sizeWithFont:infoFont constrainedToSize:CGSizeMake(170, MAXFLOAT) lineBreakMode:UILineBreakModeWordWrap];
-    uint infoLines = MIN(4, infoSize.height / textLineheight);
-
-    infoLabel.frame = CGRectMake(ui.contentOffset, heightOffset, 170, textLineheight * infoLines);
-    infoLabel.numberOfLines = infoLines;
+    infoLabel.font = infoFont;
+    infoLabel.frame = CGRectMake(ui.contentOffset, heightOffset, 170, 60);
+    infoLabel.numberOfLines = 3;
     infoLabel.text = self.issue.info;
+    [infoLabel sizeToFit];
 
     heightOffset = heightOffset + infoLabel.frame.size.height + 5;
 
     // SETUP PRICE LABEL
     self.priceLabel.frame = CGRectMake(ui.contentOffset, heightOffset, 170, textLineheight);
+    priceLabel.font = infoFont;
 
     heightOffset = heightOffset + priceLabel.frame.size.height + 10;
 
@@ -248,18 +286,25 @@
     } else if ([status isEqualToString:@"downloaded"] || [status isEqualToString:@"bundled"]) {
         actionButton.frame = CGRectMake(ui.contentOffset, heightOffset, 80, 30);
     }
+    actionButton.titleLabel.font = actionFont;
 
     // SETUP ARCHIVE BUTTON
     archiveButton.frame = CGRectMake(ui.contentOffset + 80 + 10, heightOffset, 80, 30);
+    archiveButton.titleLabel.font = archiveFont;
 
     // SETUP DOWN/LOADING SPINNER AND LABEL
     spinner.frame = CGRectMake(ui.contentOffset, heightOffset, 30, 30);
     self.loadingLabel.frame = CGRectMake(ui.contentOffset + self.spinner.frame.size.width + 10, heightOffset, 135, 30);
+    loadingLabel.font = actionFont;
 
     heightOffset = heightOffset + self.loadingLabel.frame.size.height + 5;
 
     // SETUP PROGRESS BAR
     self.progressBar.frame = CGRectMake(ui.contentOffset, heightOffset, 170, 30);
+}
+
+- (void)preferredContentSizeChanged:(NSNotification *)notification {
+    [self refreshContentWithCache:YES];
 }
 
 - (void)viewWillAppear:(BOOL)animated
@@ -273,7 +318,7 @@
 }
 - (void)refresh:(NSString *)status
 {
-    NSLog(@"Refreshing %@ view with status %@ -> %@", self.issue.ID, currentStatus, status);
+    //NSLog(@"[BakerShelf] Shelf UI - Refreshing %@ item with status from <%@> to <%@>", self.issue.ID, self.currentStatus, status);
     if ([status isEqualToString:@"remote"])
     {
         [self.priceLabel setText:NSLocalizedString(@"FREE_TEXT", nil)];
@@ -289,6 +334,7 @@
     }
     else if ([status isEqualToString:@"connecting"])
     {
+        NSLog(@"[BakerShelf] '%@' is Connecting...", self.issue.ID);
         [self.spinner startAnimating];
 
         self.actionButton.hidden = YES;
@@ -301,6 +347,7 @@
     }
     else if ([status isEqualToString:@"downloading"])
     {
+        NSLog(@"[BakerShelf] '%@' is Downloading...", self.issue.ID);
         [self.spinner startAnimating];
 
         self.actionButton.hidden = YES;
@@ -313,6 +360,7 @@
     }
     else if ([status isEqualToString:@"downloaded"])
     {
+        NSLog(@"[BakerShelf] '%@' is Ready to be Read.", self.issue.ID);
         [self.actionButton setTitle:NSLocalizedString(@"ACTION_DOWNLOADED_TEXT", nil) forState:UIControlStateNormal];
         [self.spinner stopAnimating];
 
@@ -361,6 +409,7 @@
     }
     else if ([status isEqualToString:@"purchasing"])
     {
+        NSLog(@"[BakerShelf] '%@' is being Purchased...", self.issue.ID);
         [self.spinner startAnimating];
 
         self.loadingLabel.text = NSLocalizedString(@"BUYING_TEXT", nil);
@@ -373,6 +422,7 @@
     }
     else if ([status isEqualToString:@"purchased"])
     {
+        NSLog(@"[BakerShelf] '%@' is Purchased.", self.issue.ID);
         [self.priceLabel setText:NSLocalizedString(@"PURCHASED_TEXT", nil)];
 
         [self.actionButton setTitle:NSLocalizedString(@"ACTION_REMOTE_TEXT", nil) forState:UIControlStateNormal];
@@ -399,7 +449,7 @@
 
     [self refreshContentWithCache:YES];
 
-    currentStatus = status;
+    self.currentStatus = status;
 }
 
 #pragma mark - Memory management
@@ -414,10 +464,9 @@
     [loadingLabel release];
     [priceLabel release];
     [issueCover release];
-    [titleFont release];
-    [infoFont release];
     [titleLabel release];
     [infoLabel release];
+    [currentStatus release];
 
     [super dealloc];
 }
@@ -429,14 +478,17 @@
     NSString *status = [self.issue getStatus];
     if ([status isEqualToString:@"remote"] || [status isEqualToString:@"purchased"]) {
     #ifdef BAKER_NEWSSTAND
+        [[NSNotificationCenter defaultCenter] postNotificationName:@"BakerIssueDownload" object:self]; // -> Baker Analytics Event
         [self download];
     #endif
     } else if ([status isEqualToString:@"downloaded"] || [status isEqualToString:@"bundled"]) {
+        [[NSNotificationCenter defaultCenter] postNotificationName:@"BakerIssueOpen" object:self]; // -> Baker Analytics Event
         [self read];
     } else if ([status isEqualToString:@"downloading"]) {
         // TODO: assuming it is supported by NewsstandKit, implement a "Cancel" operation
     } else if ([status isEqualToString:@"purchasable"]) {
     #ifdef BAKER_NEWSSTAND
+        [[NSNotificationCenter defaultCenter] postNotificationName:@"BakerIssuePurchase" object:self]; // -> Baker Analytics Event
         [self buy];
     #endif
     }
@@ -489,8 +541,10 @@
         }
 
         self.issue.transientStatus = BakerIssueTransientStatusNone;
-        [purchasesManager retrievePurchasesFor:[NSSet setWithObject:self.issue.productID]];
-        [self refresh];
+
+        [purchasesManager retrievePurchasesFor:[NSSet setWithObject:self.issue.productID] withCallback:^(NSDictionary *purchases) {
+            [self refresh];
+        }];
     }
 }
 - (void)handleIssuePurchaseFailed:(NSNotification *)notification {
@@ -519,7 +573,7 @@
         [purchasesManager markAsPurchased:transaction.payment.productIdentifier];
 
         if (![purchasesManager finishTransaction:transaction]) {
-            NSLog(@"Could not confirm purchase restore with remote server for %@", transaction.payment.productIdentifier);
+            NSLog(@"[BakerShelf] Could not confirm purchase restore with remote server for %@", transaction.payment.productIdentifier);
         }
 
         self.issue.transientStatus = BakerIssueTransientStatusNone;
@@ -553,7 +607,7 @@
     float bytesWritten = [[notification.userInfo objectForKey:@"totalBytesWritten"] floatValue];
     float bytesExpected = [[notification.userInfo objectForKey:@"expectedTotalBytes"] floatValue];
 
-    if ([currentStatus isEqualToString:@"connecting"]) {
+    if ([self.currentStatus isEqualToString:@"connecting"]) {
         self.issue.transientStatus = BakerIssueTransientStatusDownloading;
         [self refresh];
     }
@@ -567,6 +621,14 @@
     [Utils showAlertWithTitle:NSLocalizedString(@"DOWNLOAD_FAILED_TITLE", nil)
                       message:NSLocalizedString(@"DOWNLOAD_FAILED_MESSAGE", nil)
                   buttonTitle:NSLocalizedString(@"DOWNLOAD_FAILED_CLOSE", nil)];
+
+    self.issue.transientStatus = BakerIssueTransientStatusNone;
+    [self refresh];
+}
+- (void)handleUnzipError:(NSNotification *)notification {
+    [Utils showAlertWithTitle:NSLocalizedString(@"UNZIP_FAILED_TITLE", nil)
+                      message:NSLocalizedString(@"UNZIP_FAILED_MESSAGE", nil)
+                  buttonTitle:NSLocalizedString(@"UNZIP_FAILED_CLOSE", nil)];
 
     self.issue.transientStatus = BakerIssueTransientStatusNone;
     [self refresh];
@@ -590,16 +652,18 @@
 - (void) alertView:(UIAlertView *)alertView clickedButtonAtIndex:(NSInteger)buttonIndex
 {
     if(buttonIndex == 1){
+        [[NSNotificationCenter defaultCenter] postNotificationName:@"BakerIssueArchive" object:self]; // -> Baker Analytics Event
+        
         NKLibrary *nkLib = [NKLibrary sharedLibrary];
         NKIssue *nkIssue = [nkLib issueWithName:self.issue.ID];
         NSString *name = nkIssue.name;
         NSDate *date = nkIssue.date;
-        
+
         [nkLib removeIssue:nkIssue];
-        
+
         nkIssue = [nkLib addIssueWithName:name date:date];
         self.issue.path = [[nkIssue contentURL] path];
-        
+
         [self refresh];
     }
 }
@@ -659,16 +723,16 @@
     if (UI_USER_INTERFACE_IDIOM() == UIUserInterfaceIdiomPad) {
         return 240;
     } else {
-        return 156;
+        return 190;
     }
 }
 + (CGSize)getIssueCellSize
 {
     CGRect screenRect = [[UIScreen mainScreen] bounds];
     if (UI_USER_INTERFACE_IDIOM() == UIUserInterfaceIdiomPad) {
-        return CGSizeMake((screenRect.size.width - 2) / 2, [IssueViewController getIssueCellHeight]);
+        return CGSizeMake((screenRect.size.width - 10) / 2, [IssueViewController getIssueCellHeight]);
     } else {
-        return CGSizeMake(screenRect.size.width - 2, [IssueViewController getIssueCellHeight]);
+        return CGSizeMake(screenRect.size.width - 10, [IssueViewController getIssueCellHeight]);
     }
 }
 

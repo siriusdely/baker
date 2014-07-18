@@ -4,7 +4,7 @@
 //
 //  ==========================================================================================
 //
-//  Copyright (c) 2010-2012, Davide Casali, Marco Colombo, Alessandro Morandi
+//  Copyright (c) 2010-2013, Davide Casali, Marco Colombo, Alessandro Morandi
 //  All rights reserved.
 //
 //  Redistribution and use in source and binary forms, with or without modification, are
@@ -64,68 +64,77 @@
 }
 
 #ifdef BAKER_NEWSSTAND
--(BOOL)refresh {
-    NSData *json = [self getShelfJSON];
-
-    if (json) {
-        NSError* error = nil;
-        NSArray* jsonArr = [NSJSONSerialization JSONObjectWithData:json
-                                                           options:0
-                                                             error:&error];
-
-        [self updateNewsstandIssuesList:jsonArr];
-
-        NSMutableArray *tmpIssues = [NSMutableArray array];
-        [jsonArr enumerateObjectsUsingBlock:^(id obj, NSUInteger idx, BOOL *stop) {
-            BakerIssue *issue = [[[BakerIssue alloc] initWithIssueData:obj] autorelease];
-            [tmpIssues addObject:issue];
-        }];
-
-        self.issues = [tmpIssues sortedArrayUsingComparator:^NSComparisonResult(id a, id b) {
-            NSDate *first = [Utils dateWithFormattedString:[(BakerIssue*)a date]];
-            NSDate *second = [Utils dateWithFormattedString:[(BakerIssue*)b date]];
-            return [second compare:first];
-        }];
-
-        return YES;
-    } else {
-        return NO;
-    }
+-(void)refresh:(void (^)(BOOL)) callback {
+    [self getShelfJSON:^(NSData* json) {
+        if (json) {
+            NSError* error = nil;
+            NSArray* jsonArr = [NSJSONSerialization JSONObjectWithData:json
+                                                               options:0
+                                                                 error:&error];
+            
+            [self updateNewsstandIssuesList:jsonArr];
+            
+            NSMutableArray *tmpIssues = [NSMutableArray array];
+            [jsonArr enumerateObjectsUsingBlock:^(id obj, NSUInteger idx, BOOL *stop) {
+                BakerIssue *issue = [[[BakerIssue alloc] initWithIssueData:obj] autorelease];
+                [tmpIssues addObject:issue];
+            }];
+            
+            self.issues = [tmpIssues sortedArrayUsingComparator:^NSComparisonResult(id a, id b) {
+                NSDate *first = [Utils dateWithFormattedString:[(BakerIssue*)a date]];
+                NSDate *second = [Utils dateWithFormattedString:[(BakerIssue*)b date]];
+                return [second compare:first];
+            }];
+            
+            if (callback) {
+                callback(YES);
+            }
+        }
+        else {
+            if (callback) {
+                callback(NO);
+            }
+        }
+    }];
 }
 
--(NSData *)getShelfJSON {
+-(void)getShelfJSON:(void (^)(NSData*)) callback {
     BakerAPI *api = [BakerAPI sharedInstance];
-    NSData *json = [api getShelfJSON];
-
-    NSError *cachedShelfError = nil;
-
-    if (json) {
-        // Cache the shelf manifest
-        [[NSFileManager defaultManager] createFileAtPath:self.shelfManifestPath contents:nil attributes:nil];
-        [json writeToFile:self.shelfManifestPath
-                  options:NSDataWritingAtomic
-                    error:&cachedShelfError];
-        if (cachedShelfError) {
-            NSLog(@"Error caching Shelf manifest: %@", cachedShelfError);
-        }
-    } else {
-        if ([[NSFileManager defaultManager] fileExistsAtPath:self.shelfManifestPath]) {
-            NSLog(@"Loading cached Shelf manifest from %@", self.shelfManifestPath);
-            json = [NSData dataWithContentsOfFile:self.shelfManifestPath options:NSDataReadingMappedIfSafe error:&cachedShelfError];
+    [api getShelfJSON:^(NSData* json) {
+        NSError *cachedShelfError = nil;
+        
+        if (json) {
+            // Cache the shelf manifest
+            [[NSFileManager defaultManager] createFileAtPath:self.shelfManifestPath contents:nil attributes:nil];
+            NSError* error = nil;
+            [json writeToFile:self.shelfManifestPath
+                      options:NSDataWritingAtomic
+                        error:&error];
             if (cachedShelfError) {
-                NSLog(@"Error loading cached Shelf manifest: %@", cachedShelfError);
+                NSLog(@"[BakerShelf] ERROR: Unable to cache 'shelf.json' manifest: %@", cachedShelfError);
             }
         } else {
-            NSLog(@"No cached Shelf manifest found at %@", self.shelfManifestPath);
-            json = nil;
+            if ([[NSFileManager defaultManager] fileExistsAtPath:self.shelfManifestPath]) {
+                NSLog(@"[BakerShelf] Loading cached Shelf manifest from %@", self.shelfManifestPath);
+                json = [NSData dataWithContentsOfFile:self.shelfManifestPath options:NSDataReadingMappedIfSafe error:&cachedShelfError];
+                if (cachedShelfError) {
+                    NSLog(@"[BakerShelf] Error loading cached copy of 'shelf.json': %@", cachedShelfError);
+                }
+            } else {
+                NSLog(@"[BakerShelf] No cached 'shelf.json' manifest found at %@", self.shelfManifestPath);
+                json = nil;
+            }
         }
-    }
-
-    return json;
+        
+        if (callback) {
+            callback(json);
+        };
+    }];
 }
 
 -(void)updateNewsstandIssuesList:(NSArray *)issuesList {
     NKLibrary *nkLib = [NKLibrary sharedLibrary];
+    NSMutableArray *discardedIssues = [NSMutableArray arrayWithArray:[nkLib issues]];
 
     for (NSDictionary *issue in issuesList) {
         NSDate *date = [Utils dateWithFormattedString:[issue objectForKey:@"date"]];
@@ -133,14 +142,22 @@
 
         NKIssue *nkIssue = [nkLib issueWithName:name];
         if(!nkIssue) {
+            // Add issue to Newsstand Library
             @try {
                 nkIssue = [nkLib addIssueWithName:name date:date];
-                NSLog(@"added %@ %@", name, date);
+                NSLog(@"[BakerShelf] Newsstand - Added %@ %@", name, date);
             } @catch (NSException *exception) {
-                NSLog(@"EXCEPTION %@", exception);
+                NSLog(@"[BakerShelf] ERROR: Exception %@", exception);
             }
-
+        } else {
+            // Issue already in Newsstand Library
+            [discardedIssues removeObject:nkIssue];
         }
+    }
+
+    for (NKIssue *discardedIssue in discardedIssues) {
+        [nkLib removeIssue:discardedIssue];
+        NSLog(@"[BakerShelf] Newsstand - Removed %@", discardedIssue.name);
     }
 }
 
@@ -177,10 +194,10 @@
                 BakerIssue *issue = [[[BakerIssue alloc] initWithBakerBook:book] autorelease];
                 [booksList addObject:issue];
             } else {
-                NSLog(@"[ERROR] Book %@ could not be initialized", file);
+                NSLog(@"[BakerShelf] ERROR: Book %@ could not be initialized. Is 'book.json' correct and valid?", file);
             }
         } else {
-            NSLog(@"CANNOT FIND MANIFEST %@", manifestFile);
+            NSLog(@"[BakerShelf] ERROR: Cannot find 'book.json'. Is it present? Should be here: %@", manifestFile);
         }
     }
 

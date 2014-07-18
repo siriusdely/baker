@@ -4,7 +4,7 @@
 //
 //  ==========================================================================================
 //
-//  Copyright (c) 2010-2012, Davide Casali, Marco Colombo, Alessandro Morandi
+//  Copyright (c) 2010-2013, Davide Casali, Marco Colombo, Alessandro Morandi
 //  All rights reserved.
 //
 //  Redistribution and use in source and binary forms, with or without modification, are
@@ -56,6 +56,7 @@
 @synthesize notificationDownloadProgressingName;
 @synthesize notificationDownloadFinishedName;
 @synthesize notificationDownloadErrorName;
+@synthesize notificationUnzipErrorName;
 
 -(id)initWithBakerBook:(BakerBook *)book {
     self = [super init];
@@ -91,6 +92,7 @@
     self.notificationDownloadProgressingName = [NSString stringWithFormat:@"notification_download_progressing_%@", self.ID];
     self.notificationDownloadFinishedName = [NSString stringWithFormat:@"notification_download_finished_%@", self.ID];
     self.notificationDownloadErrorName = [NSString stringWithFormat:@"notification_download_error_%@", self.ID];
+    self.notificationUnzipErrorName = [NSString stringWithFormat:@"notification_unzip_error_%@", self.ID];
 }
 
 #ifdef BAKER_NEWSSTAND
@@ -173,27 +175,51 @@
 - (void)connectionDidFinishDownloading:(NSURLConnection *)connection destinationURL:(NSURL *)destinationURL {
     #ifdef BAKER_NEWSSTAND
     [self unpackAssetDownload:connection.newsstandAssetDownload toURL:destinationURL];
-
-    [[NSNotificationCenter defaultCenter] postNotificationName:notificationDownloadFinishedName object:self userInfo:nil];
-
-    [self updateNewsstandIcon];
     #endif
 }
 
 #ifdef BAKER_NEWSSTAND
 - (void)unpackAssetDownload:(NKAssetDownload *)newsstandAssetDownload toURL:(NSURL *)destinationURL {
+
+    UIApplication *application = [UIApplication sharedApplication];
     NKIssue *nkIssue = newsstandAssetDownload.issue;
     NSString *destinationPath = [[nkIssue contentURL] path];
 
-    NSLog(@"File is being unzipped to %@", destinationPath);
-    [SSZipArchive unzipFileAtPath:[destinationURL path] toDestination:destinationPath];
+    __block UIBackgroundTaskIdentifier backgroundTask = [application beginBackgroundTaskWithExpirationHandler:^{
+        [application endBackgroundTask:backgroundTask];
+        backgroundTask = UIBackgroundTaskInvalid;
+    }];
 
-    NSLog(@"Removing temporary downloaded file %@", [destinationURL path]);
-    NSFileManager *fileMgr = [NSFileManager defaultManager];
-    NSError *error;
-    if ([fileMgr removeItemAtPath:[destinationURL path] error:&error] != YES){
-        NSLog(@"Unable to delete file: %@", [error localizedDescription]);
-    }
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        NSLog(@"[BakerShelf] Newsstand - File is being unzipped to %@", destinationPath);
+        BOOL unzipSuccessful = NO;
+        unzipSuccessful = [SSZipArchive unzipFileAtPath:[destinationURL path] toDestination:destinationPath];
+        if (!unzipSuccessful) {
+            NSLog(@"[BakerShelf] Newsstand - Unable to unzip file: %@. The file may not be a valid HPUB archive.", [destinationURL path]);
+            dispatch_async(dispatch_get_main_queue(), ^(void) {
+                [[NSNotificationCenter defaultCenter] postNotificationName:notificationUnzipErrorName object:self userInfo:nil];
+            });
+        }
+
+        NSLog(@"[BakerShelf] Newsstand - Removing temporary downloaded file %@", [destinationURL path]);
+        NSFileManager *fileMgr = [NSFileManager defaultManager];
+        NSError *error;
+        if ([fileMgr removeItemAtPath:[destinationURL path] error:&error] != YES){
+            NSLog(@"[BakerShelf] Newsstand - Unable to delete file: %@", [error localizedDescription]);
+        }
+
+        if (unzipSuccessful) {
+            // Notification and UI update have to be handled on the main thread
+            dispatch_async(dispatch_get_main_queue(), ^(void) {
+                [[NSNotificationCenter defaultCenter] postNotificationName:notificationDownloadFinishedName object:self userInfo:nil];
+            });
+        }
+
+        [self updateNewsstandIcon];
+
+        [application endBackgroundTask:backgroundTask];
+        backgroundTask = UIBackgroundTaskInvalid;
+    });
 }
 - (void)updateNewsstandIcon {
     [[UIApplication sharedApplication] setApplicationIconBadgeNumber:1];
@@ -286,6 +312,7 @@
     [coverPath release];
     [coverURL release];
 
+    [notificationUnzipErrorName release];
     [notificationDownloadErrorName release];
     [notificationDownloadFinishedName release];
     [notificationDownloadProgressingName release];

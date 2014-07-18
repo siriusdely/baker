@@ -4,7 +4,7 @@
 //
 //  ==========================================================================================
 //
-//  Copyright (c) 2010-2012, Davide Casali, Marco Colombo, Alessandro Morandi
+//  Copyright (c) 2010-2013, Davide Casali, Marco Colombo, Alessandro Morandi
 //  All rights reserved.
 //
 //  Redistribution and use in source and binary forms, with or without modification, are
@@ -30,14 +30,18 @@
 //
 
 #import "Constants.h"
+#import "UIConstants.h"
 
 #import "AppDelegate.h"
 #import "UICustomNavigationController.h"
 #import "UICustomNavigationBar.h"
 #import "IssuesManager.h"
 #import "BakerAPI.h"
+#import "UIColor+Extensions.h"
+#import "Utils.h"
 
 #import "BakerViewController.h"
+#import "BakerAnalyticsEvents.h"
 
 @implementation AppDelegate
 
@@ -64,16 +68,21 @@
 
 - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions
 {
-    NSLog(@"application didFinishLaunchingWithOptions");
 
     #ifdef BAKER_NEWSSTAND
 
-    NSLog(@"====== Newsstand is enabled ======");    
+    NSLog(@"====== Baker Newsstand Mode enabled ======");
     [BakerAPI generateUUIDOnce];
 
     // Let the device know we want to handle Newsstand push notifications
     [application registerForRemoteNotificationTypes:UIRemoteNotificationTypeNewsstandContentAvailability];
 
+    #ifdef DEBUG
+    // For debug only... so that you can download multiple issues per day during development
+    [[NSUserDefaults standardUserDefaults] setBool:YES forKey:@"NKDontThrottleNewsstandContentNotifications"];
+    [[NSUserDefaults standardUserDefaults] synchronize];
+    #endif
+    
     // Check if the app is runnig in response to a notification
     NSDictionary *payload = [launchOptions objectForKey:UIApplicationLaunchOptionsRemoteNotificationKey];
     if (payload) {
@@ -85,11 +94,20 @@
                 backgroundTask = UIBackgroundTaskInvalid;
             }];
 
+            // Credit where credit is due. This semaphore solution found here:
+            // http://stackoverflow.com/a/4326754/2998
+            dispatch_semaphore_t sema = NULL;
+            sema = dispatch_semaphore_create(0);
+
             dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_BACKGROUND, 0), ^{
                 [self applicationWillHandleNewsstandNotificationOfContent:[payload objectForKey:@"content-name"]];
                 [application endBackgroundTask:backgroundTask];
                 backgroundTask = UIBackgroundTaskInvalid;
+                dispatch_semaphore_signal(sema);
             });
+
+            dispatch_semaphore_wait(sema, DISPATCH_TIME_FOREVER);
+            dispatch_release(sema);
         }
     }
 
@@ -97,7 +115,7 @@
 
     #else
 
-    NSLog(@"====== Newsstand is not enabled ======");
+    NSLog(@"====== Baker Standalone Mode enabled ======");
     NSArray *books = [IssuesManager localBooksList];
     if ([books count] == 1) {
         self.rootViewController = [[[BakerViewController alloc] initWithBook:[[books objectAtIndex:0] bakerBook]] autorelease];
@@ -107,10 +125,21 @@
 
     #endif
 
-    self.rootNavigationController = [[UICustomNavigationController alloc] initWithRootViewController:self.rootViewController];
+    self.rootNavigationController = [[[UICustomNavigationController alloc] initWithRootViewController:self.rootViewController] autorelease];
     UICustomNavigationBar *navigationBar = (UICustomNavigationBar *)self.rootNavigationController.navigationBar;
-    [navigationBar setBackgroundImage:[UIImage imageNamed:@"navigation-bar-bg.png"] forBarMetrics:UIBarMetricsDefault];
-    [navigationBar setTintColor:[UIColor clearColor]];
+
+    if (SYSTEM_VERSION_GREATER_THAN_OR_EQUAL_TO(@"7.0")) {
+        // Background is 64px high: in iOS7, it will be used as the background for the status bar as well.
+        [navigationBar setTintColor:[UIColor colorWithHexString:ISSUES_ACTION_BUTTON_BACKGROUND_COLOR]];
+        [navigationBar setBarTintColor:[UIColor colorWithHexString:@"ffffff"]];
+        [navigationBar setBackgroundImage:[UIImage imageNamed:@"navigation-bar-bg"] forBarMetrics:UIBarMetricsDefault];
+        navigationBar.titleTextAttributes = [NSDictionary dictionaryWithObject:[UIColor colorWithHexString:@"000000"] forKey:UITextAttributeTextColor];
+    } else {
+        // Background is 44px: in iOS6 and below, a higher background image would make the navigation bar
+        // appear higher than it should be.
+        [navigationBar setBackgroundImage:[UIImage imageNamed:@"navigation-bar-bg-ios6"] forBarMetrics:UIBarMetricsDefault];
+        [navigationBar setTintColor:[UIColor colorWithHexString:@"333333"]]; // black will not trigger a pushed status
+    }
 
     self.window = [[[InterceptorWindow alloc] initWithFrame:[[UIScreen mainScreen] bounds]] autorelease];
     self.window.backgroundColor = [UIColor whiteColor];
@@ -118,6 +147,11 @@
     self.window.rootViewController = self.rootNavigationController;
     [self.window makeKeyAndVisible];
 
+    
+    // ****** Analytics Setup
+    [BakerAnalyticsEvents sharedInstance]; // Initialization
+    [[NSNotificationCenter defaultCenter] postNotificationName:@"BakerApplicationStart" object:self]; // -> Baker Analytics Event
+    
     return YES;
 }
 
@@ -127,8 +161,8 @@
     NSString *apnsToken = [[deviceToken description] stringByTrimmingCharactersInSet:[NSCharacterSet characterSetWithCharactersInString:@"<>"]];
     apnsToken = [apnsToken stringByReplacingOccurrencesOfString:@" " withString:@""];
 
-    NSLog(@"My token (as NSData) is: %@", deviceToken);
-    NSLog(@"My token (as NSString) is: %@", apnsToken);
+    NSLog(@"[AppDelegate] My token (as NSData) is: %@", deviceToken);
+    NSLog(@"[AppDelegate] My token (as NSString) is: %@", apnsToken);
 
     [[NSUserDefaults standardUserDefaults] setObject:apnsToken forKey:@"apns_token"];
     [[NSUserDefaults standardUserDefaults] synchronize];
@@ -140,10 +174,19 @@
 
 - (void)application:(UIApplication*)application didFailToRegisterForRemoteNotificationsWithError:(NSError*)error
 {
-	NSLog(@"Failed to get token, error: %@", error);
+	NSLog(@"[AppDelegate] Push Notification - Device Token, review: %@", error);
 }
 
 - (void)application:(UIApplication *)application didReceiveRemoteNotification:(NSDictionary *)userInfo
+{
+    #ifdef BAKER_NEWSSTAND
+    NSDictionary *aps = [userInfo objectForKey:@"aps"];
+    if (aps && [aps objectForKey:@"content-available"]) {
+        [self applicationWillHandleNewsstandNotificationOfContent:[userInfo objectForKey:@"content-name"]];
+    }
+    #endif
+}
+- (void)application:(UIApplication *)application didReceiveRemoteNotification:(NSDictionary *)userInfo fetchCompletionHandler:(void (^)(UIBackgroundFetchResult result))handler
 {
     #ifdef BAKER_NEWSSTAND
     NSDictionary *aps = [userInfo objectForKey:@"aps"];
@@ -156,18 +199,35 @@
 {
     #ifdef BAKER_NEWSSTAND
     IssuesManager *issuesManager = [IssuesManager sharedInstance];
-    [issuesManager refresh];
+    PurchasesManager *purchasesManager = [PurchasesManager sharedInstance];
+    __block BakerIssue *targetIssue = nil;
 
-    if (contentName) {
-        for (BakerIssue *issue in issuesManager.issues) {
-            if ([issue.ID isEqualToString:contentName]) {
-                [issue download];
+    [issuesManager refresh:^(BOOL status) {
+        if (contentName) {
+            for (BakerIssue *issue in issuesManager.issues) {
+                if ([issue.ID isEqualToString:contentName]) {
+                    targetIssue = issue;
+                    break;
+                }
             }
+        } else {
+            targetIssue = [issuesManager.issues objectAtIndex:0];
         }
-    } else {
-        BakerIssue *targetIssue = [issuesManager.issues objectAtIndex:0];
-        [targetIssue download];
-    }
+
+        [purchasesManager retrievePurchasesFor:[issuesManager productIDs] withCallback:^(NSDictionary *_purchases) {
+
+            NSString *targetStatus = [targetIssue getStatus];
+            NSLog(@"[AppDelegate] Push Notification - Target status: %@", targetStatus);
+
+            if ([targetStatus isEqualToString:@"remote"] || [targetStatus isEqualToString:@"purchased"]) {
+                [targetIssue download];
+            } else if ([targetStatus isEqualToString:@"purchasable"] || [targetStatus isEqualToString:@"unpriced"]) {
+                NSLog(@"[AppDelegate] Push Notification - You are not entitled to download issue '%@', issue not purchased yet", targetIssue.ID);
+            } else if (![targetStatus isEqualToString:@"remote"]) {
+                NSLog(@"[AppDelegate] Push Notification - Issue '%@' in download or already downloaded", targetIssue.ID);
+            }
+        }];
+    }];
     #endif
 }
 - (void)applicationWillResignActive:(UIApplication *)application

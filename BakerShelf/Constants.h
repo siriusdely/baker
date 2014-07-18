@@ -4,7 +4,7 @@
 //
 //  ==========================================================================================
 //
-//  Copyright (c) 2010-2012, Davide Casali, Marco Colombo, Alessandro Morandi
+//  Copyright (c) 2010-2013, Davide Casali, Marco Colombo, Alessandro Morandi
 //  All rights reserved.
 //
 //  Redistribution and use in source and binary forms, with or without modification, are
@@ -41,9 +41,6 @@
     #define BAKER_NEWSSTAND
 
     #ifdef BAKER_NEWSSTAND
-
-        // Remove the following line once you complete the Newsstand setup below.
-        #warning Newsstand: Remember to set the AppStore/Newsstand constants and delete this line once you did it.
 
         // ----------------------------------------------------------------------------------------------------
         // Mandatory - This constant defines where the JSON file containing all the publications is located.

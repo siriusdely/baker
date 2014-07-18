@@ -4,7 +4,7 @@
 //
 //  ==========================================================================================
 //
-//  Copyright (c) 2010-2012, Davide Casali, Marco Colombo, Alessandro Morandi
+//  Copyright (c) 2010-2013, Davide Casali, Marco Colombo, Alessandro Morandi
 //  All rights reserved.
 //
 //  Redistribution and use in source and binary forms, with or without modification, are
@@ -44,12 +44,14 @@
 @property (strong, nonatomic) UIToolbar *toolbar;
 @property (strong, nonatomic) UIBarButtonItem *btnGoBack;
 @property (strong, nonatomic) UIBarButtonItem *btnGoForward;
+@property (strong, nonatomic) UIBarButtonItem *btnReload;
 @property (strong, nonatomic) UIActivityIndicatorView *spinner;
 
 - (id)initWithUrl:(NSURL *)url;
 - (void)dismissAction;
 - (void)goBack;
 - (void)goForward;
+- (void)reloadPage;
 - (void)openInSafari;
 
 @end
